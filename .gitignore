@@ -10,6 +10,7 @@
 # Precompiled Headers
 *.gch
 *.pch
+*.ipch
 
 # Compiled Dynamic libraries
 *.so
@@ -30,3 +31,10 @@
 *.exe
 *.out
 *.app
+
+# Build Directories
+x64
+x86
+
+# Per user stuff
+.vs
