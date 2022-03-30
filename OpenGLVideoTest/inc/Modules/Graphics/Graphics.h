@@ -5,6 +5,8 @@
 
 struct GLFWwindow;
 struct ImVec4;
+struct ImVec2;
+struct ImGuiContext;
 class Renderer;
 
 class Graphics : public Module
@@ -13,14 +15,12 @@ private:
 	GLFWwindow* m_Window = nullptr;
 
 	std::shared_ptr<Renderer> m_Renderer = nullptr;
+	std::shared_ptr<ImGuiContext> m_ImGUIContext = nullptr;
 	std::shared_ptr<ImVec4> m_ClearColour;
+	std::shared_ptr<ImVec2> m_WindowSize;
+
 
 	bool m_Init = false;
-
-	float m_ColourR = 1.0f;
-	float m_ColourG = 0.0f;
-	float m_ColourB = 0.0f;
-	float m_ColourA = 1.0f;
 
 public:
 	int Start() override;
@@ -30,6 +30,12 @@ public:
 protected:
 
 	void SetupParts() override;
+
+private:
+	int SetupGLFW();
+	int SetupImGUI();
+
+	void RenderStats();
 
 };
 

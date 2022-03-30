@@ -24,9 +24,6 @@ int Engine::Start()
 
 int Engine::Tick()
 {
-	std::cout << "*CHUGGA CHUGGA* (Frame: " << m_FrameCount << ")" << std::endl;
-
-	m_FrameCount++;
 
 	if (m_GraphicsModule != nullptr)
 	{
@@ -42,6 +39,8 @@ int Engine::Tick()
 		std::cout << "Graphics Module failed! err: " << m_GraphicsStatus << " (Frame: " << m_FrameCount << ")" << std::endl;
 		return -1;
 	}
+
+	m_FrameCount++;
 
 	return 0;
 }
