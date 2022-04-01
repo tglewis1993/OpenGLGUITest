@@ -8,10 +8,18 @@
 #include <glew/glew.h>
 #include <GLFW/glfw3.h>
 
+#include <IL/il.h>
+#include <IL/ilu.h>
+#include <IL/ilut.h>
+
+#include <FI/FreeImage.h>
+
 #include <Modules/Graphics/Renderer.h>
 
 #include <iostream>
 #include <string>
+#include <algorithm>
+//#include <wingdi.h>
 
 static void GLFW_ERROR_LOG(int error, const char* description)
 {
@@ -44,6 +52,8 @@ int Graphics::Start()
 	return 0;
 }
 
+
+
 int Graphics::Tick()
 {
 	if (m_Init)
@@ -69,13 +79,13 @@ int Graphics::Tick()
 		ImGui_ImplGlfw_NewFrame();
 		ImGui::NewFrame();
 
-		static float f = 0.0f;
-		static int counter = 0;
-
 		static bool closeShown = false;
 		static bool closeRequested = false;
 
 		static bool showStats = false;
+		static bool showRenderScreen = false;
+
+		static bool beginRendering = false;
 
 		ImVec2 centre = ImGui::GetMainViewport()->GetWorkCenter();
 
@@ -93,7 +103,7 @@ int Graphics::Tick()
 			{
 				if (ImGui::MenuItem("Render To File..."))
 				{
-
+					showRenderScreen = true;
 				}
 
 				if (ImGui::MenuItem("Show Stats", NULL, showStats))
@@ -116,8 +126,7 @@ int Graphics::Tick()
 		if (closeShown)
 		{
 			closeShown = false;
-			//ImGui::OpenPopup("Exiting Application...");
-
+			ImGui::OpenPopup("Exiting Application...");
 
 			if (mainWindow != nullptr)
 			{
@@ -125,34 +134,29 @@ int Graphics::Tick()
 			}
 		}
 
-		if (ImGui::BeginPopupModal("Exiting Application...", NULL, ImGuiWindowFlags_AlwaysAutoResize))
+		if (showRenderScreen)
 		{
-			ImGui::Text("Are you sure you want to exit?\n\n");
-			ImGui::Separator();
-			ImGui::BeginGroup();
+			showRenderScreen = false;
+			ImGui::OpenPopup("Render To File...");
+
+			if (mainWindow != nullptr)
 			{
-
-				if (ImGui::Button("Yes", ImVec2(120.f, 0.f)))
-				{
-					closeRequested = true;
-				}
-				ImGui::SameLine();
-				if (ImGui::Button("No", ImVec2(120.f, 0.f)))
-				{
-					ImGui::CloseCurrentPopup();
-				}
+				ImGui::SetNextWindowPos(mainWindowMid, ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
 			}
-
-			ImGui::EndPopup();
 		}
 
-		ImGui::TextWrapped("The contents of this box are a few examples of simple functionality provided by the ImGui library!");
+		if (ShowExitWindow() == 1)
+		{
+			closeRequested = true;
+		}
+
+		if (ShowRenderToFileWindow() == 1)
+		{
+			beginRendering = true;
+		}
 
 		if (showStats)
-			RenderStats();
-
-		//ImGui::SetNextWindowSize(ImVec2(m_WindowSize->x / 4.f, m_WindowSize->y / 4.f), ImGuiCond_Appearing);
-
+			ShowStatsWindow();
 
 		ImGui::Render();
 
@@ -165,6 +169,80 @@ int Graphics::Tick()
 		glClear(GL_COLOR_BUFFER_BIT);
 
 		ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
+
+		if (beginRendering)
+		{
+			static float delay = 0.f;
+			static float renderTime = 0.f;
+			static int frames = 0;
+			static int renderedFrames = 0;
+
+			if (delay < m_RenderFileDelay)
+			{
+				delay += ImGui::GetIO().DeltaTime;
+			}
+			else
+			{
+				renderTime += ImGui::GetIO().DeltaTime;
+
+				if (renderTime < m_RenderFileTime)
+				{
+					static double refresh_time = 0.0;
+					if (refresh_time == 0.0)
+						refresh_time = ImGui::GetTime();
+
+					// render at desired frame rate
+					while (refresh_time < ImGui::GetTime())
+					{
+						GLubyte* pixels = new GLubyte[3 * display_w * display_h];
+
+						glReadPixels(0, 0, display_w, display_h, GL_BGR, GL_UNSIGNED_BYTE, pixels);
+
+						GLenum err = glGetError();
+
+						if (err != GL_NO_ERROR)
+						{
+							std::cout << "Couldn't read frame buffer pixels! (" << err << ")" << std::endl;
+						}
+						else
+						{
+							char fileName[64] = "";
+
+							sprintf_s(fileName, "C:\\RenderImages\\%s_%d.bmp", m_RenderFileName, renderedFrames);
+
+							FIBITMAP* image = FreeImage_ConvertFromRawBits(pixels, display_w, display_h, 3 * display_w, 24, FI_RGBA_RED_MASK, FI_RGBA_GREEN_MASK, FI_RGBA_BLUE_MASK, FALSE);
+
+							SaveBufferToBMP(pixels, renderedFrames);
+
+							if (FreeImage_Save(FIF_BMP, image, fileName, 0))
+								std::cout << "Successfully saved!" << std::endl;
+							else
+								std::cout << "Failed to save!" << std::endl;
+
+							FreeImage_Unload(image);
+						}
+
+						delete pixels;
+
+						++renderedFrames;
+
+						refresh_time += 1.0f / m_RenderFileFPS;
+					}
+
+					++frames;
+				}
+				else
+				{
+					std::cout << "Rendering of '" << m_RenderFileName << "' complete! (Frames: " << std::to_string(renderedFrames) << ")" << std::endl;
+
+					beginRendering = false;
+					delay = 0;
+					renderTime = 0;
+					frames = 0;
+					renderedFrames = 0;
+				}
+			}
+		}
 
 		glfwSwapBuffers(m_Window);
 
@@ -282,7 +360,16 @@ int Graphics::SetupImGUI()
 
 }
 
-void Graphics::RenderStats()
+int Graphics::SetupDevIL()
+{
+	ilInit();
+	iluInit();
+	ilutRenderer(ILUT_OPENGL);
+
+	return 0;
+}
+
+void Graphics::ShowStatsWindow()
 {
 	ImGui::SetNextItemOpen(true, ImGuiCond_FirstUseEver);
 
@@ -300,7 +387,7 @@ void Graphics::RenderStats()
 		// plot points into 'values' array
 		while (refresh_time < ImGui::GetTime()) // Create data at fixed 60 Hz rate
 		{
-			values[values_offset] = 1000.0f / ImGui::GetIO().Framerate;
+			values[values_offset] = ImGui::GetIO().DeltaTime;
 			values_offset = (values_offset + 1) % IM_ARRAYSIZE(values);
 			refresh_time += 1.0f / 60.0f;
 		}
@@ -309,11 +396,141 @@ void Graphics::RenderStats()
 		{
 			char avg[64];
 
-			sprintf_s(avg, "Average Frame Time: %.3f (FPS: %.1f)", 1000.0f / ImGui::GetIO().Framerate, ImGui::GetIO().Framerate);
+			sprintf_s(avg, "Average Frame Time: %.5f (FPS: %f)", ImGui::GetIO().DeltaTime, ImGui::GetIO().Framerate);
 
 			//std::string overlay_text = "Average Frame Time: " + std::to_chars(1000.0f / ImGui::GetIO().Framerate) + "ms (FPS: " + std::to_string(ImGui::GetIO().Framerate) + ")";
 
-			ImGui::PlotLines("", values, IM_ARRAYSIZE(values), values_offset, avg, 0.0f, 0.5f, ImVec2(0, 80.0f));
+			ImGui::PlotLines("", values, IM_ARRAYSIZE(values), values_offset, avg, 0.0f, 0.5f, ImVec2(0, 100.0f));
 		}
 	}
+}
+
+int Graphics::ShowRenderToFileWindow()
+{
+	if (ImGui::BeginPopupModal("Render To File...", NULL, ImGuiWindowFlags_AlwaysAutoResize))
+	{
+		static char tmpBuf[32] = "";
+
+		ImGui::InputTextWithHint("File Name", "Please enter file name...", tmpBuf, IM_ARRAYSIZE(tmpBuf));
+		ImGui::InputInt("Frame Rate (FPS)", &m_RenderFileFPS);
+		ImGui::InputInt("Time (Seconds)", &m_RenderFileTime);
+		ImGui::InputInt("Delay (Seconds)", &m_RenderFileDelay);
+
+		if (m_RenderFileFPS < 1)
+			m_RenderFileFPS = 1;
+		else if (m_RenderFileFPS > 60)
+			m_RenderFileFPS = 60;
+
+		if (m_RenderFileTime < 1)
+			m_RenderFileTime = 1;
+		else if (m_RenderFileTime > 30)
+			m_RenderFileTime = 30;
+
+		if (m_RenderFileDelay < 0)
+			m_RenderFileDelay = 0;
+		else if (m_RenderFileDelay > 5)
+			m_RenderFileDelay = 5;
+
+		ImGui::Text("\n\n\n\n");
+
+		ImGui::Separator();
+		ImGui::BeginGroup();
+		{
+
+			if (ImGui::Button("Render", ImVec2(200.f, 0.f)))
+			{
+				std::copy_n(tmpBuf, 32, m_RenderFileName);
+
+				std::cout << "new: " << m_RenderFileName << "\nold: " << tmpBuf << std::endl;
+
+				ImGui::CloseCurrentPopup();
+				return 1;
+			}
+			ImGui::SameLine();
+			if (ImGui::Button("Cancel", ImVec2(200.f, 0.f)))
+			{
+				ImGui::CloseCurrentPopup();
+				return -1;
+			}
+		}
+
+		ImGui::EndPopup();
+
+		return 0;
+	}
+}
+
+int Graphics::ShowExitWindow()
+{
+	if (ImGui::BeginPopupModal("Exiting Application...", NULL, ImGuiWindowFlags_AlwaysAutoResize))
+	{
+		ImGui::Text("Are you sure you want to exit?\n\n");
+		ImGui::Separator();
+		ImGui::BeginGroup();
+		{
+
+			if (ImGui::Button("Yes", ImVec2(120.f, 0.f)))
+			{
+				ImGui::CloseCurrentPopup();
+				return 1;
+			}
+			ImGui::SameLine();
+			if (ImGui::Button("No", ImVec2(120.f, 0.f)))
+			{
+				ImGui::CloseCurrentPopup();
+				return -1;
+			}
+		}
+
+		ImGui::EndPopup();
+
+		return 0;
+	}
+}
+
+void Graphics::SaveBufferToBMP(const unsigned char* buf, const int& frameNumber) const
+{
+	char fileName[64] = "";
+
+	sprintf_s(fileName, "C:\\RenderImages\\%s_%d.bmp", m_RenderFileName, frameNumber);
+
+	std::cout << fileName << std::endl;
+
+
+	/*FILE* file;
+	unsigned long imageSize = 3* m_WindowSize->x* m_WindowSize->y;
+	GLbyte* data = NULL;
+	GLenum lastBuffer;
+	BITMAPFILEHEADER bmfh;
+	BITMAPINFOHEADER bmih;
+
+	bmfh.bfType = 'MB';
+	bmfh.bfReserved1 = 0;
+	bmfh.bfReserved2 = 0;
+	bmfh.bfOffBits = 54;
+	bmih.biSize = 40;
+
+	bmih.biWidth = m_WindowSize->x;
+	bmih.biHeight = m_WindowSize->y;
+	bmih.biPlanes = 1;
+	bmih.biBitCount = 24;
+	bmih.biCompression = 0;
+	bmih.biSizeImage = imageSize;
+	bmih.biXPelsPerMeter = 45089;
+	bmih.biYPelsPerMeter = 45089;
+	bmih.biClrUsed = 0;
+	bmih.biClrImportant = 0;
+
+	bmfh.bfSize = imageSize + sizeof(bmfh) + sizeof(bmih);
+
+	file = fopen(m_RenderFileName, "wb");
+
+	fwrite(&bmfh, sizeof(bmfh), 1, file);
+	fwrite(&bmih, sizeof(bmih), 1, file);
+	fwrite(data, imageSize, 1, file);
+	free(data);
+	fclose(file);*/
+
+
+
 }

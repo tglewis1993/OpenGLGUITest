@@ -2,6 +2,7 @@
 #include <Modules/Module.h>
 
 #include <memory>
+#include <array>
 
 struct GLFWwindow;
 struct ImVec4;
@@ -19,10 +20,16 @@ private:
 	std::shared_ptr<ImVec4> m_ClearColour;
 	std::shared_ptr<ImVec2> m_WindowSize;
 
-
 	bool m_Init = false;
 
+	char m_RenderFileName[32]{};
+	int m_RenderFileFPS = 60;
+	int m_RenderFileTime = 15;
+	int m_RenderFileDelay = 5;
+
 public:
+	Graphics() = default;
+
 	int Start() override;
 	int Tick() override;
 	int End() override;
@@ -34,8 +41,13 @@ protected:
 private:
 	int SetupGLFW();
 	int SetupImGUI();
+	int SetupDevIL();
 
-	void RenderStats();
+	void ShowStatsWindow();
+	int ShowRenderToFileWindow();
+	int ShowExitWindow();
+
+	void SaveBufferToBMP(const unsigned char*, const int&) const;
 
 };
 
