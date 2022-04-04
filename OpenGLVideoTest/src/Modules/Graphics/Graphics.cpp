@@ -24,7 +24,18 @@ static void GLFW_ERROR_LOG(int error, const char* description)
 
 int Graphics::Start()
 {
+	sprintf_s(m_RenderFilePathBase, "%s\\Videos", std::filesystem::current_path().string().c_str());
 	sprintf_s(m_PrintFilePathBase, "%s\\Logs", std::filesystem::current_path().string().c_str());
+
+	if (!std::filesystem::exists(m_RenderFilePathBase))
+	{
+		std::filesystem::create_directory(m_RenderFilePathBase);
+	}
+
+	if (!std::filesystem::exists(m_PrintFilePathBase))
+	{
+		std::filesystem::create_directory(m_PrintFilePathBase);
+	}
 
 	m_ClearColour = std::make_shared<ImVec4>(ImVec4(0.45f, 0.55f, 0.60f, 1.00f));
 	m_WindowSize = std::make_shared<ImVec2>(ImVec2(1600.0f, 900.0f));
@@ -583,8 +594,7 @@ int Graphics::ShowRenderToFileWindow()
 {
 	if (ImGui::BeginPopupModal("Render To File...", NULL, ImGuiWindowFlags_AlwaysAutoResize))
 	{
-		static char tmpBuf[16];
-		tmpBuf[0] = 0;
+		static char tmpBuf[16]{ 0 };
 
 		ImGui::InputTextWithHint("File Name", "Please enter file name...", tmpBuf, IM_ARRAYSIZE(tmpBuf));
 		ImGui::InputInt("Frame Rate (FPS)", &m_RenderFileFPS);

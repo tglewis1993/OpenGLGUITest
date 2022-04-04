@@ -41,7 +41,8 @@ private:
 
 	//std::string m_PrintFilePathBase = "";
 
-	char m_PrintFilePathBase[256]{};
+	char m_PrintFilePathBase[256]{0};
+	char m_RenderFilePathBase[256]{0};
 
 	unsigned int m_PixelBuffers[2]{};
 	int m_ReadIndex = 0;
