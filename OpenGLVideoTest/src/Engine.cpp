@@ -6,8 +6,6 @@
 
 int Engine::Start()
 {
-	std::cout << "Engine is cranking up!" << std::endl;
-
 	m_GraphicsModule = std::make_shared<Graphics>(Graphics());
 
 	if (m_GraphicsModule != nullptr)
@@ -47,8 +45,6 @@ int Engine::Tick()
 
 int Engine::End()
 {
-	std::cout << "Engine is stopping!" << std::endl;
-
 	if (m_GraphicsModule != nullptr)
 	{
 		m_GraphicsModule->End();

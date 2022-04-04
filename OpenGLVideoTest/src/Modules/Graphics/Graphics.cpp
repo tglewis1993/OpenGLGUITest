@@ -118,8 +118,6 @@ int Graphics::Tick()
 
 		ImVec2 mainWindowMid = ImVec2(mainWindow->Size.x / 2.f, mainWindow->Size.y / 2.f);
 
-		ImGui::Text("OpenGL based GUI and Video Recorder");
-
 		ShowMenuBar(beginRendering, showRenderScreen, showCurrentlyRenderingScreen, showPrintedScreen, showStats, closeShown);
 
 		if (closeShown)
@@ -222,6 +220,8 @@ int Graphics::Tick()
 
 		ShowUsageTable();
 
+		ShowKnownIssuesTable();
+
 		ImGui::Render();
 
 		int display_w, display_h;
@@ -318,7 +318,7 @@ int Graphics::Tick()
 							for (auto frame : m_StoredFrames)
 							{
 								if (frame != nullptr);
-									delete frame;
+								delete frame;
 							}
 
 							m_StoredFrames.clear();
@@ -583,7 +583,8 @@ int Graphics::ShowRenderToFileWindow()
 {
 	if (ImGui::BeginPopupModal("Render To File...", NULL, ImGuiWindowFlags_AlwaysAutoResize))
 	{
-		static char tmpBuf[16] = "";
+		static char tmpBuf[16];
+		tmpBuf[0] = 0;
 
 		ImGui::InputTextWithHint("File Name", "Please enter file name...", tmpBuf, IM_ARRAYSIZE(tmpBuf));
 		ImGui::InputInt("Frame Rate (FPS)", &m_RenderFileFPS);
@@ -612,12 +613,16 @@ int Graphics::ShowRenderToFileWindow()
 		{
 			if (ImGui::Button("Render", ImVec2(200.f, 0.f)))
 			{
-				std::copy_n(tmpBuf, 16, m_RenderFileName);
+				if (tmpBuf[0] != 0)
+				{
+					std::copy_n(tmpBuf, 16, m_RenderFileName);
 
-				sprintf_s(m_RenderFilePath, "%s\\Videos\\%s.wmv", std::filesystem::current_path().string().c_str(), m_RenderFileName);
+					sprintf_s(m_RenderFilePath, "%s\\Videos\\%s.wmv", std::filesystem::current_path().string().c_str(), m_RenderFileName);
 
-				ImGui::CloseCurrentPopup();
-				return 1;
+					ImGui::CloseCurrentPopup();
+
+					return 1;
+				}
 			}
 			ImGui::SameLine();
 			if (ImGui::Button("Cancel", ImVec2(200.f, 0.f)))
@@ -830,15 +835,49 @@ void Graphics::ShowKnownIssuesTable()
 			ImGui::TableSetColumnIndex(1);
 			ImGui::TextWrapped("Currently the recording process stores the pixel data of each frame in memory for the desired time before giving it to the video writer.");
 			ImGui::TextWrapped("Each pixel in each frame is in RGB32 format, meaning with each frame takes 1600 * 900 * 4 bytes of memory, 5.76MB.");
-			ImGui::TextWrapped("Given a 30 second video at 60fps is desired, that's 10.368GB is memory...\n\n");
+			ImGui::TextWrapped("Given a 30 second video when 60fps is desired, that's 10.368GB in memory...\n\n");
 			ImGui::TextWrapped("In the interest of time, I have limited the videos to be 30 seconds at 30fps maximum to hard cap it going over this already ridiculously large figure.\n\n");
 			ImGui::TextWrapped("Solutions:");
-			ImGui::TextWrapped("Have the video write each frame as soon as it is read from the pixel buffer object.");
-			ImGui::TextWrapped("This would immediately cut the memory usage to single frame figures.");
-			ImGui::TextWrapped("Could introduce latency significant latency as we'd be sampling each frame for the video as we are simultaneously reading the next frame from the GPU");
+			ImGui::TextWrapped("Have each frame encoded as soon as it is read from the pixel buffer object.");
+			ImGui::TextWrapped("This would immediately cut the memory usage to single frame figures (could open the door for live video streaming later).\n\n");
+			ImGui::TextWrapped("This could introduce significant latency as we'd be sampling each frame of the video while we are simultaneously reading the next frame from the GPU");
 			ImGui::TextWrapped("Care would need to be taken to make sure we are only processing complete frames.\n\n");
 			ImGui::TextWrapped("Half the render resolution.");
-			ImGui::TextWrapped("This would cut the memory footprint in half and the drawback of reduced video quality.\n\n");
+			ImGui::TextWrapped("This would cut the memory footprint in half and the drawback of reduced video quality.");
+
+			ImGui::TableNextRow();
+			ImGui::TableSetColumnIndex(0);
+			ImGui::Text("Windows reliance");
+			ImGui::TableSetColumnIndex(1);
+			ImGui::TextWrapped("I have used Windows Media Foundation as a means to encode my frames to video. This is not a cross platform solution.");
+			ImGui::TextWrapped("If I were to take this further, I would investaigate into writing my own wrapper for avcodec as a means to provide a cross platform solution.");
+
+			ImGui::TableNextRow();
+			ImGui::TableSetColumnIndex(0);
+			ImGui::Text("OpenGL only");
+			ImGui::TableSetColumnIndex(1);
+			ImGui::TextWrapped("This demo only uses OpenGL 4.6 and has not looked into DirectX or Vulkan APIs.");
+			ImGui::TextWrapped("Fortunately ImGui supports a heap of different platforms, so it would only be a matter of having the time to add that explicit support.");
+
+			ImGui::TableNextRow();
+			ImGui::TableSetColumnIndex(0);
+			ImGui::Text("Styling");
+			ImGui::TableSetColumnIndex(1);
+			ImGui::TextWrapped("The GUI on display here is pretty barebones in terms of colours and styles.");
+			ImGui::TextWrapped("If I were to take this further I would make a html/css wrapper for the ImGui style settings to allow us to set window styles.");
+
+			ImGui::TableNextRow();
+			ImGui::TableSetColumnIndex(0);
+			ImGui::Text("S P A G H E T T I");
+			ImGui::TableSetColumnIndex(1);
+			ImGui::TextWrapped("The code here is quite untidy in spots and could definitely do with a spring clean.\n\n");
+			ImGui::TextWrapped("As I am using OpenGL 4.6, I could have made use of DSA (Direct State Access) which makes programming with OpenGL a bit closer to OOP.");
+
+			ImGui::TableNextRow();
+			ImGui::TableSetColumnIndex(0);
+			ImGui::Text("Irrelevant 'engine' code");
+			ImGui::TableSetColumnIndex(1);
+			ImGui::TextWrapped("Tried to get too fancy early on setting up a whole engine, some engine structure left in after employing KISS.");
 
 			ImGui::EndTable();
 		}
