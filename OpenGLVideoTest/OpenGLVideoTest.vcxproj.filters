@@ -30,6 +30,7 @@
     <ClCompile Include="src\imgui\imgui_tables.cpp" />
     <ClCompile Include="src\imgui\imgui_widgets.cpp" />
     <ClCompile Include="src\imgui\imgui_impl_opengl3.cpp" />
+    <ClCompile Include="src\Modules\Graphics\VideoWriter.cpp" />
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="inc\Engine.h">
@@ -53,5 +54,6 @@
     <ClInclude Include="inc\imgui\imstb_truetype.h" />
     <ClInclude Include="inc\imgui\imgui_impl_opengl3.h" />
     <ClInclude Include="inc\imgui\imgui_impl_opengl3_loader.h" />
+    <ClInclude Include="inc\Modules\Graphics\VideoWriter.h" />
   </ItemGroup>
 </Project>

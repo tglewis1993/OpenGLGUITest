@@ -3,11 +3,15 @@
 
 #include <memory>
 #include <array>
+#include <vector>
+#include <string>
+#include <future>
 
 struct GLFWwindow;
 struct ImVec4;
 struct ImVec2;
 struct ImGuiContext;
+struct FIBITMAP;
 class Renderer;
 
 class Graphics : public Module
@@ -23,9 +27,33 @@ private:
 	bool m_Init = false;
 
 	char m_RenderFileName[32]{};
-	int m_RenderFileFPS = 60;
-	int m_RenderFileTime = 15;
-	int m_RenderFileDelay = 5;
+	char m_RenderFilePath[128]{};
+	int m_RenderFileFPS = 30;
+	int m_RenderFileTime = 10;
+	int m_RenderFileDelay = 1;
+
+	double m_RecordRefreshTime = 0.0;
+	float m_RecordDelayTime = 0.0f;
+	float m_RecordTime = 0.0f;
+
+	bool m_Saving = false;
+	bool m_Recording = false;
+
+	//std::string m_PrintFilePathBase = "";
+
+	char m_PrintFilePathBase[256]{};
+
+	unsigned int m_PixelBuffers[2]{};
+	int m_ReadIndex = 0;
+	int m_WriteIndex = 1;
+
+	double m_CumulativeFrameTime = 0.0;
+
+	unsigned int m_BufferSize = 0;
+
+	std::vector<void*> m_StoredFrames{};
+
+	std::future<void> m_VideoWriteTask;
 
 public:
 	Graphics() = default;
@@ -41,13 +69,22 @@ protected:
 private:
 	int SetupGLFW();
 	int SetupImGUI();
-	int SetupDevIL();
 
+	void ShowMenuBar(bool& beginRendering, bool& showRenderScreen, bool& showCurrentlyRenderingScreen, bool& showPrintedScreen, bool& showStats, bool& closeShown);
 	void ShowStatsWindow();
 	int ShowRenderToFileWindow();
 	int ShowExitWindow();
+	int ShowOverwriteWindow();
+	int ShowPrintCompleteWindow();
+	int ShowCurrentlyRenderingWindow();
+	void ShowRecordingStatus(const bool& isRecording, const bool& isWriting, const bool& isDelayed, const float& renderDelay);
+	void ShowUsageTable();
+	void ShowKnownIssuesTable();
 
-	void SaveBufferToBMP(const unsigned char*, const int&) const;
+	void PrintOpenGLInfo();
+	void PrintGLFWInfo();
+	void PrintGLEWInfo();
+	void PrintSomethingFun();
 
 };
 

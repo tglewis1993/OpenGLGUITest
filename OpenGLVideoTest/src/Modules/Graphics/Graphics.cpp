@@ -8,18 +8,14 @@
 #include <glew/glew.h>
 #include <GLFW/glfw3.h>
 
-#include <IL/il.h>
-#include <IL/ilu.h>
-#include <IL/ilut.h>
-
-#include <FI/FreeImage.h>
-
 #include <Modules/Graphics/Renderer.h>
+#include <Modules/Graphics/VideoWriter.h>
 
 #include <iostream>
-#include <string>
 #include <algorithm>
-//#include <wingdi.h>
+#include <filesystem>
+#include <fstream>
+#include <future>
 
 static void GLFW_ERROR_LOG(int error, const char* description)
 {
@@ -28,8 +24,12 @@ static void GLFW_ERROR_LOG(int error, const char* description)
 
 int Graphics::Start()
 {
+	sprintf_s(m_PrintFilePathBase, "%s\\Logs", std::filesystem::current_path().string().c_str());
+
 	m_ClearColour = std::make_shared<ImVec4>(ImVec4(0.45f, 0.55f, 0.60f, 1.00f));
 	m_WindowSize = std::make_shared<ImVec2>(ImVec2(1600.0f, 900.0f));
+
+	m_BufferSize = m_WindowSize->x * m_WindowSize->y * 4;
 
 	int err = SetupGLFW();
 
@@ -47,6 +47,18 @@ int Graphics::Start()
 		return err;
 	}
 
+	ImGui::GetIO().MouseDrawCursor = true;
+
+	glGenBuffers(2, m_PixelBuffers);
+
+	glBindBuffer(GL_PIXEL_PACK_BUFFER, m_PixelBuffers[0]);
+	glBufferData(GL_PIXEL_PACK_BUFFER, m_BufferSize, 0, GL_STREAM_READ);
+
+	glBindBuffer(GL_PIXEL_PACK_BUFFER, m_PixelBuffers[1]);
+	glBufferData(GL_PIXEL_PACK_BUFFER, m_BufferSize, 0, GL_STREAM_READ);
+
+	glBindBuffer(GL_PIXEL_PACK_BUFFER, 0);
+
 	m_Init = true;
 
 	return 0;
@@ -58,6 +70,8 @@ int Graphics::Tick()
 {
 	if (m_Init)
 	{
+		VideoWriter* vidWrite = (VideoWriter*)m_Parts[1].get();
+
 		if (glfwWindowShouldClose(m_Window))
 		{
 			std::cout << "Graphics Module - Window close requested!" << std::endl;
@@ -85,64 +99,87 @@ int Graphics::Tick()
 		static bool showStats = false;
 		static bool showRenderScreen = false;
 
+		static bool showOverwriteScreen = false;
+
+		static bool showPrintedScreen = false;
+
+		static bool showCurrentlyRenderingScreen = false;
+
 		static bool beginRendering = false;
+		static bool isDelayed = false;
 
 		ImVec2 centre = ImGui::GetMainViewport()->GetWorkCenter();
 
 		ImGui::SetNextWindowPos(centre, ImGuiCond_FirstUseEver, ImVec2(0.5f, 0.5f));
-		ImGui::SetNextWindowSize(ImVec2(m_WindowSize->x / 2.f, m_WindowSize->y / 2.f), ImGuiCond_FirstUseEver);
+		ImGui::SetNextWindowSize(ImVec2(1280, 640), ImGuiCond_FirstUseEver);
 		ImGui::Begin("ImGui In Action!", NULL, ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_MenuBar);
 
 		ImGuiWindow* mainWindow = ImGui::GetCurrentWindow();
 
 		ImVec2 mainWindowMid = ImVec2(mainWindow->Size.x / 2.f, mainWindow->Size.y / 2.f);
 
-		if (ImGui::BeginMenuBar())
-		{
-			if (ImGui::BeginMenu("File"))
-			{
-				if (ImGui::MenuItem("Render To File..."))
-				{
-					showRenderScreen = true;
-				}
+		ImGui::Text("OpenGL based GUI and Video Recorder");
 
-				if (ImGui::MenuItem("Show Stats", NULL, showStats))
-				{
-					showStats = !showStats;
-				}
-
-				if (ImGui::MenuItem("Exit"))
-				{
-					closeShown = true;
-				}
-
-				ImGui::EndMenu();
-			}
-
-			ImGui::EndMenuBar();
-		}
-
+		ShowMenuBar(beginRendering, showRenderScreen, showCurrentlyRenderingScreen, showPrintedScreen, showStats, closeShown);
 
 		if (closeShown)
 		{
 			closeShown = false;
-			ImGui::OpenPopup("Exiting Application...");
 
 			if (mainWindow != nullptr)
 			{
 				ImGui::SetNextWindowPos(mainWindowMid, ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
 			}
+
+			ImGui::OpenPopup("Exiting Application...");
 		}
 
 		if (showRenderScreen)
 		{
 			showRenderScreen = false;
-			ImGui::OpenPopup("Render To File...");
 
 			if (mainWindow != nullptr)
 			{
 				ImGui::SetNextWindowPos(mainWindowMid, ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
 			}
+
+			ImGui::OpenPopup("Render To File...");
+		}
+
+		if (showOverwriteScreen)
+		{
+			showOverwriteScreen = false;
+
+			if (mainWindow != nullptr)
+			{
+				ImGui::SetNextWindowPos(mainWindowMid, ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
+			}
+
+			ImGui::OpenPopup("Overwite existing file?");
+		}
+
+		if (showCurrentlyRenderingScreen)
+		{
+			showCurrentlyRenderingScreen = false;
+
+			if (mainWindow != nullptr)
+			{
+				ImGui::SetNextWindowPos(mainWindowMid, ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
+			}
+
+			ImGui::OpenPopup("Rendering still in progress!");
+		}
+
+		if (showPrintedScreen)
+		{
+			showPrintedScreen = false;
+
+			if (mainWindow != nullptr)
+			{
+				ImGui::SetNextWindowPos(mainWindowMid, ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
+			}
+
+			ImGui::OpenPopup("Print Complete!");
 		}
 
 		if (ShowExitWindow() == 1)
@@ -152,11 +189,38 @@ int Graphics::Tick()
 
 		if (ShowRenderToFileWindow() == 1)
 		{
-			beginRendering = true;
+			if (std::filesystem::exists(m_RenderFilePath))
+			{
+				showOverwriteScreen = true;
+			}
+			else
+			{
+				beginRendering = true;
+			}
 		}
+
+		if (ShowOverwriteWindow() == 1)
+		{
+			if (std::remove(m_RenderFilePath) == 0)
+			{
+				beginRendering = true;
+			}
+			else
+			{
+				std::cout << "Could not overwrite '" << m_RenderFilePath << "'!" << std::endl;
+			}
+		}
+
+		ShowCurrentlyRenderingWindow();
+
+		ShowPrintCompleteWindow();
 
 		if (showStats)
 			ShowStatsWindow();
+
+		ShowRecordingStatus(m_Recording, m_Saving, isDelayed, m_RecordDelayTime);
+
+		ShowUsageTable();
 
 		ImGui::Render();
 
@@ -172,74 +236,94 @@ int Graphics::Tick()
 
 		if (beginRendering)
 		{
-			static float delay = 0.f;
-			static float renderTime = 0.f;
-			static int frames = 0;
-			static int renderedFrames = 0;
-
-			if (delay < m_RenderFileDelay)
+			if (m_RecordDelayTime < m_RenderFileDelay)
 			{
-				delay += ImGui::GetIO().DeltaTime;
+				isDelayed = true;
+
+				m_RecordDelayTime += ImGui::GetIO().DeltaTime;
 			}
 			else
 			{
-				renderTime += ImGui::GetIO().DeltaTime;
+				isDelayed = false;
 
-				if (renderTime < m_RenderFileTime)
+				m_RecordTime += ImGui::GetIO().DeltaTime;
+
+				if (m_RecordTime < m_RenderFileTime)
 				{
-					static double refresh_time = 0.0;
-					if (refresh_time == 0.0)
-						refresh_time = ImGui::GetTime();
+					m_Recording = true;
+
+					if (m_RecordRefreshTime == 0.0)
+						m_RecordRefreshTime = ImGui::GetTime();
 
 					// render at desired frame rate
-					while (refresh_time < ImGui::GetTime())
+					while (m_RecordRefreshTime < ImGui::GetTime())
 					{
-						GLubyte* pixels = new GLubyte[3 * display_w * display_h];
+						//swap read and write indices
+						m_WriteIndex = (m_WriteIndex + 1) % 2;
+						m_ReadIndex = (m_WriteIndex + 1) % 2;
 
-						glReadPixels(0, 0, display_w, display_h, GL_BGR, GL_UNSIGNED_BYTE, pixels);
+						glBindBuffer(GL_PIXEL_PACK_BUFFER, m_PixelBuffers[m_WriteIndex]);
+						glReadPixels(0, 0, m_WindowSize->x, m_WindowSize->y, GL_BGRA, GL_UNSIGNED_BYTE, NULL);
+						glBindBuffer(GL_PIXEL_PACK_BUFFER, m_PixelBuffers[m_ReadIndex]);
 
-						GLenum err = glGetError();
+						void* mapData = glMapBuffer(GL_PIXEL_PACK_BUFFER, GL_READ_ONLY);
 
-						if (err != GL_NO_ERROR)
+						if (mapData != nullptr)
 						{
-							std::cout << "Couldn't read frame buffer pixels! (" << err << ")" << std::endl;
-						}
-						else
-						{
-							char fileName[64] = "";
+							void* frameCopy = malloc(m_BufferSize);
 
-							sprintf_s(fileName, "C:\\RenderImages\\%s_%d.bmp", m_RenderFileName, renderedFrames);
+							if (memcpy_s(frameCopy, m_BufferSize, mapData, m_BufferSize) == 0)
+							{
+								m_StoredFrames.push_back(frameCopy);
+							}
 
-							FIBITMAP* image = FreeImage_ConvertFromRawBits(pixels, display_w, display_h, 3 * display_w, 24, FI_RGBA_RED_MASK, FI_RGBA_GREEN_MASK, FI_RGBA_BLUE_MASK, FALSE);
-
-							SaveBufferToBMP(pixels, renderedFrames);
-
-							if (FreeImage_Save(FIF_BMP, image, fileName, 0))
-								std::cout << "Successfully saved!" << std::endl;
-							else
-								std::cout << "Failed to save!" << std::endl;
-
-							FreeImage_Unload(image);
+							glUnmapBuffer(GL_PIXEL_PACK_BUFFER);
 						}
 
-						delete pixels;
+						glBindBuffer(GL_PIXEL_PACK_BUFFER, 0);
 
-						++renderedFrames;
-
-						refresh_time += 1.0f / m_RenderFileFPS;
+						m_RecordRefreshTime += 1.0f / m_RenderFileFPS;
 					}
-
-					++frames;
 				}
 				else
 				{
-					std::cout << "Rendering of '" << m_RenderFileName << "' complete! (Frames: " << std::to_string(renderedFrames) << ")" << std::endl;
+					if (vidWrite != nullptr && !m_Saving)
+					{
+						std::cout << m_StoredFrames.size() << " frames have been recorded, attempting to write to '" << m_RenderFileName << ".wmv'" << std::endl;
 
-					beginRendering = false;
-					delay = 0;
-					renderTime = 0;
-					frames = 0;
-					renderedFrames = 0;
+						m_Recording = false;
+
+						std::cout << vidWrite << std::endl;
+
+						if (vidWrite->Init(m_RenderFilePath, m_WindowSize->x, m_WindowSize->y, m_RenderFileFPS, m_RenderFileTime, 6000000) == 0)
+						{
+							m_VideoWriteTask = std::async(std::launch::async, &VideoWriter::WriteAllFrames, *vidWrite, m_StoredFrames);
+
+							m_Saving = true;
+						}
+					}
+					else
+					{
+						if (m_VideoWriteTask.wait_for(std::chrono::seconds(0)) == std::future_status::ready)
+						{
+							beginRendering = false;
+							m_Saving = false;
+
+							std::cout << "'" << m_RenderFileName << ".wmv' has successfully saved! (Path: " << m_RenderFilePath << ")" << std::endl;
+
+							m_RecordDelayTime = 0;
+							m_RecordTime = 0;
+							m_RecordRefreshTime = 0.0;
+
+							for (auto frame : m_StoredFrames)
+							{
+								if (frame != nullptr);
+									delete frame;
+							}
+
+							m_StoredFrames.clear();
+						}
+					}
 				}
 			}
 		}
@@ -270,6 +354,14 @@ int Graphics::End()
 
 	if (m_Init)
 	{
+		for (void* frame : m_StoredFrames)
+		{
+			if (frame != nullptr)
+				delete frame;
+		}
+
+		m_StoredFrames.clear();
+
 		ImGui_ImplOpenGL3_Shutdown();
 		ImGui_ImplGlfw_Shutdown();
 		ImGui::DestroyContext();
@@ -293,6 +385,16 @@ void Graphics::SetupParts()
 
 		m_Parts.push_back(rend);
 	}
+
+	std::shared_ptr<VideoWriter> vidWriter = std::make_shared<VideoWriter>(VideoWriter());
+
+	if (vidWriter != nullptr)
+	{
+		vidWriter->Start();
+
+		m_Parts.push_back(vidWriter);
+	}
+
 }
 
 int Graphics::SetupGLFW()
@@ -306,7 +408,7 @@ int Graphics::SetupGLFW()
 		return -1;
 	}
 
-	m_Window = glfwCreateWindow(m_WindowSize->x, m_WindowSize->y, "Opengl/ImGui Test", NULL, NULL);
+	m_Window = glfwCreateWindow(m_WindowSize->x, m_WindowSize->y, "OpenGL GUI and Video Renderer", NULL, NULL);
 
 	if (m_Window == nullptr)
 	{
@@ -321,6 +423,17 @@ int Graphics::SetupGLFW()
 
 	// vsync off = 0 , on = 1
 	glfwSwapInterval(0);
+
+	std::cout << "OpenGL version: " << glGetString(GL_VERSION) << std::endl;
+
+	GLenum err = glewInit();
+	if (GLEW_OK != err)
+	{
+		/* Problem: glewInit failed, something is seriously wrong. */
+		std::cout << "Error: %s\n" << (unsigned char*)glewGetErrorString(err) << std::endl;
+
+		return -3;
+	}
 
 	return 0;
 }
@@ -360,13 +473,68 @@ int Graphics::SetupImGUI()
 
 }
 
-int Graphics::SetupDevIL()
+void Graphics::ShowMenuBar(bool& beginRendering, bool& showRenderScreen, bool& showCurrentlyRenderingScreen, bool& showPrintedScreen, bool& showStats, bool& closeShown)
 {
-	ilInit();
-	iluInit();
-	ilutRenderer(ILUT_OPENGL);
+	if (ImGui::BeginMenuBar())
+	{
+		if (ImGui::BeginMenu("File"))
+		{
+			if (ImGui::MenuItem("Render To File..."))
+			{
+				if (!beginRendering)
+				{
+					showRenderScreen = true;
+				}
+				else
+				{
+					showCurrentlyRenderingScreen = true;
+				}
+			}
 
-	return 0;
+			if (ImGui::BeginMenu("Print Info"))
+			{
+				if (ImGui::MenuItem("Print OpenGL Info"))
+				{
+					PrintOpenGLInfo();
+					showPrintedScreen = true;
+				}
+
+				if (ImGui::MenuItem("Print GLFW Info"))
+				{
+					PrintGLFWInfo();
+					showPrintedScreen = true;
+				}
+
+				if (ImGui::MenuItem("Print GLEW Info"))
+				{
+					PrintGLEWInfo();
+					showPrintedScreen = true;
+				}
+
+				if (ImGui::MenuItem("Print something fun :)"))
+				{
+					PrintSomethingFun();
+					showPrintedScreen = true;
+				}
+
+				ImGui::EndMenu();
+			}
+
+			if (ImGui::MenuItem("Show Stats", NULL, showStats))
+			{
+				showStats = !showStats;
+			}
+
+			if (ImGui::MenuItem("Exit"))
+			{
+				closeShown = true;
+			}
+
+			ImGui::EndMenu();
+		}
+
+		ImGui::EndMenuBar();
+	}
 }
 
 void Graphics::ShowStatsWindow()
@@ -375,19 +543,25 @@ void Graphics::ShowStatsWindow()
 
 	if (ImGui::TreeNode("Stats"))
 	{
+		int currFrame = ImGui::GetFrameCount();
+
+		// avoid divide by zero
+		if (currFrame == 0)
+			currFrame = 1;
+
+		m_CumulativeFrameTime += ImGui::GetIO().DeltaTime * 1000;
+
 		// Fill an array of contiguous float values to plot
-		// Tip: If your float aren't contiguous but part of a structure, you can pass a pointer to your first float
-		// and the sizeof() of your structure in the "stride" parameter.
 		static float values[90] = {};
 		static int values_offset = 0;
 		static double refresh_time = 0.0;
 		if (refresh_time == 0.0)
 			refresh_time = ImGui::GetTime();
 
-		// plot points into 'values' array
-		while (refresh_time < ImGui::GetTime()) // Create data at fixed 60 Hz rate
+		// plot delta time of frame in ms
+		while (refresh_time < ImGui::GetTime()) // Create data at fixed 60Hz rate
 		{
-			values[values_offset] = ImGui::GetIO().DeltaTime;
+			values[values_offset] = ImGui::GetIO().DeltaTime * 1000;
 			values_offset = (values_offset + 1) % IM_ARRAYSIZE(values);
 			refresh_time += 1.0f / 60.0f;
 		}
@@ -396,11 +570,11 @@ void Graphics::ShowStatsWindow()
 		{
 			char avg[64];
 
-			sprintf_s(avg, "Average Frame Time: %.5f (FPS: %f)", ImGui::GetIO().DeltaTime, ImGui::GetIO().Framerate);
+			sprintf_s(avg, "Average Frame Time: %.5fms (FPS: %f)", m_CumulativeFrameTime / ImGui::GetFrameCount(), ImGui::GetIO().Framerate);
 
 			//std::string overlay_text = "Average Frame Time: " + std::to_chars(1000.0f / ImGui::GetIO().Framerate) + "ms (FPS: " + std::to_string(ImGui::GetIO().Framerate) + ")";
 
-			ImGui::PlotLines("", values, IM_ARRAYSIZE(values), values_offset, avg, 0.0f, 0.5f, ImVec2(0, 100.0f));
+			ImGui::PlotLines("", values, IM_ARRAYSIZE(values), values_offset, avg, 0.0f, 5.0f, ImVec2(0, 100.0f));
 		}
 	}
 }
@@ -409,7 +583,7 @@ int Graphics::ShowRenderToFileWindow()
 {
 	if (ImGui::BeginPopupModal("Render To File...", NULL, ImGuiWindowFlags_AlwaysAutoResize))
 	{
-		static char tmpBuf[32] = "";
+		static char tmpBuf[16] = "";
 
 		ImGui::InputTextWithHint("File Name", "Please enter file name...", tmpBuf, IM_ARRAYSIZE(tmpBuf));
 		ImGui::InputInt("Frame Rate (FPS)", &m_RenderFileFPS);
@@ -418,13 +592,13 @@ int Graphics::ShowRenderToFileWindow()
 
 		if (m_RenderFileFPS < 1)
 			m_RenderFileFPS = 1;
-		else if (m_RenderFileFPS > 60)
-			m_RenderFileFPS = 60;
+		else if (m_RenderFileFPS > 30)
+			m_RenderFileFPS = 30;
 
 		if (m_RenderFileTime < 1)
 			m_RenderFileTime = 1;
-		else if (m_RenderFileTime > 30)
-			m_RenderFileTime = 30;
+		else if (m_RenderFileTime > 600)
+			m_RenderFileTime = 600;
 
 		if (m_RenderFileDelay < 0)
 			m_RenderFileDelay = 0;
@@ -436,12 +610,11 @@ int Graphics::ShowRenderToFileWindow()
 		ImGui::Separator();
 		ImGui::BeginGroup();
 		{
-
 			if (ImGui::Button("Render", ImVec2(200.f, 0.f)))
 			{
-				std::copy_n(tmpBuf, 32, m_RenderFileName);
+				std::copy_n(tmpBuf, 16, m_RenderFileName);
 
-				std::cout << "new: " << m_RenderFileName << "\nold: " << tmpBuf << std::endl;
+				sprintf_s(m_RenderFilePath, "%s\\Videos\\%s.wmv", std::filesystem::current_path().string().c_str(), m_RenderFileName);
 
 				ImGui::CloseCurrentPopup();
 				return 1;
@@ -458,6 +631,8 @@ int Graphics::ShowRenderToFileWindow()
 
 		return 0;
 	}
+
+
 }
 
 int Graphics::ShowExitWindow()
@@ -468,7 +643,39 @@ int Graphics::ShowExitWindow()
 		ImGui::Separator();
 		ImGui::BeginGroup();
 		{
+			if (ImGui::Button("Yes", ImVec2(120.f, 0.f)))
+			{
+				ImGui::CloseCurrentPopup();
+				return 1;
+			}
+			ImGui::SameLine();
+			if (ImGui::Button("No", ImVec2(120.f, 0.f)))
+			{
+				ImGui::CloseCurrentPopup();
+				return -1;
+			}
+		}
 
+		ImGui::EndPopup();
+
+		return 0;
+	}
+
+
+}
+
+int Graphics::ShowOverwriteWindow()
+{
+	if (ImGui::BeginPopupModal("Overwite existing file?", NULL, ImGuiWindowFlags_AlwaysAutoResize))
+	{
+		char message[128] = "";
+		sprintf_s(message, "'%s' already exists, rendering will overwrite this file!\n\n", m_RenderFileName);
+
+		ImGui::TextWrapped(message);
+		ImGui::Text("Are you sure you want to continue?\n\n");
+		ImGui::Separator();
+		ImGui::BeginGroup();
+		{
 			if (ImGui::Button("Yes", ImVec2(120.f, 0.f)))
 			{
 				ImGui::CloseCurrentPopup();
@@ -488,49 +695,266 @@ int Graphics::ShowExitWindow()
 	}
 }
 
-void Graphics::SaveBufferToBMP(const unsigned char* buf, const int& frameNumber) const
+int Graphics::ShowPrintCompleteWindow()
 {
-	char fileName[64] = "";
+	if (ImGui::BeginPopupModal("Print Complete!", NULL, ImGuiWindowFlags_AlwaysAutoResize))
+	{
+		ImGui::TextWrapped("Printed! Check Logs folder for text file!\n\n");
+		ImGui::Separator();
+		ImGui::BeginGroup();
+		{
+			if (ImGui::Button("Okay", ImVec2(260.f, 0.f)))
+			{
+				ImGui::CloseCurrentPopup();
+				return 1;
+			}
+		}
 
-	sprintf_s(fileName, "C:\\RenderImages\\%s_%d.bmp", m_RenderFileName, frameNumber);
+		ImGui::EndPopup();
 
-	std::cout << fileName << std::endl;
+		return 0;
+	}
+}
+
+int Graphics::ShowCurrentlyRenderingWindow()
+{
+	if (ImGui::BeginPopupModal("Rendering still in progress!", NULL, ImGuiWindowFlags_AlwaysAutoResize))
+	{
+		char message[128] = "";
+		sprintf_s(message, "Cannot start another render yet, render of '%s' still in progress!\n\n", m_RenderFileName);
+
+		ImGui::TextWrapped(message);
+		ImGui::Separator();
+		ImGui::BeginGroup();
+		{
+			if (ImGui::Button("Close", ImVec2(260.f, 0.f)))
+			{
+				ImGui::CloseCurrentPopup();
+				return 1;
+			}
+		}
+
+		ImGui::EndPopup();
+
+		return 0;
+	}
+}
+
+void Graphics::ShowRecordingStatus(const bool& isRecording, const bool& isWriting, const bool& isDelayed, const float& renderDelay)
+{
+	if (isRecording)
+	{
+		ImGui::Text("Recording '%s.wmv'... %d", m_RenderFileName, (int)m_RecordTime);
+	}
+	else if (isWriting)
+	{
+		ImGui::Text("Saving '%s.wmv'...", m_RenderFileName);
+	}
+	else if (isDelayed)
+	{
+		ImGui::Text("Recording '%s' will begin in %d", m_RenderFileName, (int)m_RenderFileDelay - (int)renderDelay);
+	}
+}
+
+void Graphics::ShowUsageTable()
+{
+	if (ImGui::TreeNode("Usage"))
+	{
+		if (ImGui::BeginTable("Usage Table", 2, ImGuiTableFlags_ScrollY | ImGuiTableFlags_SizingFixedFit | ImGuiTableFlags_RowBg | ImGuiTableFlags_Borders | ImGuiTableFlags_Resizable | ImGuiTableFlags_Hideable))
+		{
+			ImGui::TableSetupColumn("Menu Option", ImGuiTableColumnFlags_WidthFixed);
+			ImGui::TableSetupColumn("Description", ImGuiTableColumnFlags_WidthStretch);
+
+			ImGui::TableHeadersRow();
+
+			ImGui::TableNextRow();
+			ImGui::TableSetColumnIndex(0);
+			ImGui::Text("File -> Render To File...");
+			ImGui::TableSetColumnIndex(1);
+			ImGui::TextWrapped("Here you can 'record' the applications window and render the result to a .WMV file.");
+			ImGui::TextWrapped("These video files will be saved in the 'Videos' directory located in the working directory.\n\n");
+			ImGui::TextWrapped("Some details on how it works...");
+			ImGui::TextWrapped("When we start the 'recording' process, the pixels from the OpenGL Context are being read into a pixel buffer objects, which are then mapped to a byte array.");
+			ImGui::TextWrapped("We have two pixel buffer objects, one reads the pixels from the back buffer while the other is being mapped to a byte array.");
+			ImGui::TextWrapped("This allows us to get the pixels across to the CPU without needing to wait for the frame to be presented to the screen.");
+			ImGui::TextWrapped("Based on the duration specified in the 'Render To File...' popup, these byte arrays will be stored and be used as the frames in our video.\n\n");
+			ImGui::TextWrapped("When the frames for the specified duration and frame rate have been collected, they will then be passsed to the VideoWriter.");
+			ImGui::TextWrapped("The VideoWriter uses the Microsoft Media Foundation API to take our frame data and convert this into the video file.");
+			ImGui::TextWrapped("The frames have to be processed one by one, so asynchronous functionality is used so that the program does not get halted during this time.");
+
+			ImGui::TableNextRow();
+			ImGui::TableSetColumnIndex(0);
+			ImGui::Text("File -> Print Info");
+			ImGui::TableSetColumnIndex(1);
+			ImGui::TextWrapped("Here, there are four options. Each one will print information to a text file.");
+			ImGui::TextWrapped("The text files will be saved in the 'Logs' directory in the working directory.\n\n");
+			ImGui::TextWrapped("OpenGL Info:");
+			ImGui::BulletText("Vendor Name");
+			ImGui::BulletText("Version");
+			ImGui::BulletText("Renderer");
+			ImGui::BulletText("GLSL Version\n\n");
+			ImGui::TextWrapped("GLFW Info:");
+			ImGui::BulletText("Version\n\n");
+			ImGui::TextWrapped("GLEW Info:");
+			ImGui::BulletText("Available Extensions\n\n");
+			ImGui::TextWrapped("Something fun?:");
+			ImGui::BulletText("Just a memento to one of my favourite gaming franchises!");
+
+			ImGui::TableNextRow();
+			ImGui::TableSetColumnIndex(0);
+			ImGui::Text("File -> ShowStats");
+			ImGui::TableSetColumnIndex(1);
+			ImGui::TextWrapped("This will show an animated time series graph.");
+			ImGui::TextWrapped("The graph records the frame time in milliseconds of the last 90 frames.");
+			ImGui::TextWrapped("The animation runs at a fixed refresh rate of 60hz.");
+
+			ImGui::EndTable();
+		}
+	}
+}
+
+void Graphics::ShowKnownIssuesTable()
+{
+	if (ImGui::TreeNode("Issues"))
+	{
+		if (ImGui::BeginTable("Issues Table", 2, ImGuiTableFlags_ScrollY | ImGuiTableFlags_SizingFixedFit | ImGuiTableFlags_RowBg | ImGuiTableFlags_Borders | ImGuiTableFlags_Resizable | ImGuiTableFlags_Hideable))
+		{
+			ImGui::TableSetupColumn("Issues", ImGuiTableColumnFlags_WidthFixed);
+			ImGui::TableSetupColumn("Description", ImGuiTableColumnFlags_WidthStretch);
+
+			ImGui::TableHeadersRow();
+
+			ImGui::TableNextRow();
+			ImGui::TableSetColumnIndex(0);
+			ImGui::Text("Recording memory usage");
+			ImGui::TableSetColumnIndex(1);
+			ImGui::TextWrapped("Currently the recording process stores the pixel data of each frame in memory for the desired time before giving it to the video writer.");
+			ImGui::TextWrapped("Each pixel in each frame is in RGB32 format, meaning with each frame takes 1600 * 900 * 4 bytes of memory, 5.76MB.");
+			ImGui::TextWrapped("Given a 30 second video at 60fps is desired, that's 10.368GB is memory...\n\n");
+			ImGui::TextWrapped("In the interest of time, I have limited the videos to be 30 seconds at 30fps maximum to hard cap it going over this already ridiculously large figure.\n\n");
+			ImGui::TextWrapped("Solutions:");
+			ImGui::TextWrapped("Have the video write each frame as soon as it is read from the pixel buffer object.");
+			ImGui::TextWrapped("This would immediately cut the memory usage to single frame figures.");
+			ImGui::TextWrapped("Could introduce latency significant latency as we'd be sampling each frame for the video as we are simultaneously reading the next frame from the GPU");
+			ImGui::TextWrapped("Care would need to be taken to make sure we are only processing complete frames.\n\n");
+			ImGui::TextWrapped("Half the render resolution.");
+			ImGui::TextWrapped("This would cut the memory footprint in half and the drawback of reduced video quality.\n\n");
+
+			ImGui::EndTable();
+		}
+	}
+}
+
+void Graphics::PrintOpenGLInfo()
+{
+	std::ofstream file;
+
+	char filePath[128] = "";
+	sprintf_s(filePath, "%s\\opengl_info.txt", m_PrintFilePathBase);
+
+	std::cout << "Print Opengl " << filePath << std::endl;
+
+	file.open(filePath, std::ios::out);
+
+	if (file.is_open())
+	{
+		file << "OpenGL Information\n";
+		file << "-----------------------------------------\n";
+		file << "Vendor: " << glGetString(GL_VENDOR) << "\n";
+		file << "OpenGL Version: " << glGetString(GL_VERSION) << "\n";
+		file << "Renderer: " << glGetString(GL_RENDERER) << "\n";
+		file << "GLSL Version: " << glGetString(GL_SHADING_LANGUAGE_VERSION) << "\n";
 
 
-	/*FILE* file;
-	unsigned long imageSize = 3* m_WindowSize->x* m_WindowSize->y;
-	GLbyte* data = NULL;
-	GLenum lastBuffer;
-	BITMAPFILEHEADER bmfh;
-	BITMAPINFOHEADER bmih;
+		file.close();
+	}
+}
 
-	bmfh.bfType = 'MB';
-	bmfh.bfReserved1 = 0;
-	bmfh.bfReserved2 = 0;
-	bmfh.bfOffBits = 54;
-	bmih.biSize = 40;
+void Graphics::PrintGLFWInfo()
+{
+	std::ofstream file;
 
-	bmih.biWidth = m_WindowSize->x;
-	bmih.biHeight = m_WindowSize->y;
-	bmih.biPlanes = 1;
-	bmih.biBitCount = 24;
-	bmih.biCompression = 0;
-	bmih.biSizeImage = imageSize;
-	bmih.biXPelsPerMeter = 45089;
-	bmih.biYPelsPerMeter = 45089;
-	bmih.biClrUsed = 0;
-	bmih.biClrImportant = 0;
+	char filePath[128] = "";
+	sprintf_s(filePath, "%s\\glfw_info.txt", m_PrintFilePathBase);
 
-	bmfh.bfSize = imageSize + sizeof(bmfh) + sizeof(bmih);
+	file.open(filePath, std::ios::out);
 
-	file = fopen(m_RenderFileName, "wb");
-
-	fwrite(&bmfh, sizeof(bmfh), 1, file);
-	fwrite(&bmih, sizeof(bmih), 1, file);
-	fwrite(data, imageSize, 1, file);
-	free(data);
-	fclose(file);*/
+	if (file.is_open())
+	{
+		file << "GLFW Information\n";
+		file << "-----------------------------------------\n";
+		file << "Version: " << glfwGetVersionString() << "\n";
 
 
+		file.close();
+	}
+}
 
+void Graphics::PrintGLEWInfo()
+{
+	GLint n = 0;
+	glGetIntegerv(GL_NUM_EXTENSIONS, &n);
+
+	std::ofstream file;
+
+	char filePath[128] = "";
+	sprintf_s(filePath, "%s\\glew_info.txt", m_PrintFilePathBase);
+
+	file.open(filePath, std::ios::out);
+
+	if (file.is_open())
+	{
+		file << "GLEW Information\n";
+		file << "-----------------------------------------\n";
+		file << "GLEW Version: " << glewGetString(GLEW_VERSION) << "\n";
+		file << "Extensions Available:\n";
+
+		for (size_t i = 0; i < n; ++i)
+		{
+			file << glGetStringi(GL_EXTENSIONS, i) << "\n";
+		}
+
+		file.close();
+	}
+}
+
+void Graphics::PrintSomethingFun()
+{
+	std::ofstream file;
+
+	char filePath[128] = "";
+	sprintf_s(filePath, "%s\\surprise.txt", m_PrintFilePathBase);
+
+	file.open(filePath, std::ios::out);
+
+	if (file.is_open())
+	{
+		file << " _______________________________________ \n";
+		file << "|\\ ___________________________________ /|\n";
+		file << "| | _                               _ | |\n";
+		file << "| |(+)        _           _        (+)| |\n";
+		file << "| | ~      _--/           \\--_      ~ | |\n";
+		file << "| |       /  /             \\  \\       | |\n";
+		file << "| |      /  |               |  \\      | |\n";
+		file << "| |     /   |               |   \\     | |\n";
+		file << "| |     |   |    _______    |   |     | |\n";
+		file << "| |     |   |    \\     /    |   |     | |\n";
+		file << "| |     \\    \\_   |   |   _/    /     | |\n";
+		file << "| |      \\     -__|   |__-     /      | |\n";
+		file << "| |       \\_                 _/       | |\n";
+		file << "| |         --__         __--         | |\n";
+		file << "| |             --|   |--             | |\n";
+		file << "| |               |   |               | |\n";
+		file << "| |                | |                | |\n";
+		file << "| |                 |                 | |\n";
+		file << "| |                                   | |\n";
+		file << "| |     H A P P Y  F R A G G I N G    | |\n";
+		file << "| | _                               _ | |\n";
+		file << "| |(+)                             (+)| |\n";
+		file << "| | ~                               ~ | |\n";
+		file << "|/ ----------------------------------- \\|\n";
+		file << " _______________________________________ \n";
+
+		file.close();
+	}
 }
